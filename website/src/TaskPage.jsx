@@ -34,6 +34,8 @@ import { sizeText } from "./replyFiles.js";
 import { completionTransition, cutAway, filterForSelectedState, remindWaiting, remindDay } from "./taskFilter.js";
 import ReviewDecision from "./ReviewDecision.jsx";
 import SlotList from "./SlotList.jsx";
+import BatchItems from "./BatchItems.jsx";
+import { progress as batchProgress } from "./batchItems.js";
 import CloseNote from "./CloseNote.jsx";
 import { onLive } from "./live.js";
 import { pollWhileActive } from "./visible.js";
@@ -71,7 +73,7 @@ import { completionFact, completionLine, waitingEmails,
 import { closeoutOf } from "./reviewProposal.js";
 import { AgentRecord } from "./AgentRecord.jsx";
 import AgentStory, { StoryChip } from "./AgentStory.jsx";
-import { STORY_CHIP, startLabel, storyShown } from "./agentStory.js";
+import { STORY_CHIP, startLabel, storyPlace, storyShown } from "./agentStory.js";
 import PublishedPages, { isPublished } from "./PublishedPages.jsx";
 import EmailSomeone from "./EmailSomeone.jsx";
 
@@ -382,6 +384,7 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
   const [repoPick, setRepoPick] = useState(false);
   const [resumeAfterRepo, setResumeAfterRepo] = useState(null);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [itemsOpen, setItemsOpen] = useState(true);
   const [reportOpen, setReportOpen] = useState(false);
   useEffect(() => { setHandoff(false); setReshape(false); setRepoPick(false); setResumeAfterRepo(null); setDiffOpen(false); setSourceOpen(false); setReportOpen(false); setPeek(false); }, [selected]);
   // asked when the drawer opens, and only then: shelling out to git on every task poll would
@@ -591,7 +594,7 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
   const proposals = allProposals.filter((p) => !(pendingReview && p === closeoutRv));
   const sentReview = sentReplyReview(detail?.reviews || []);
   const unsentReview = sentReview ? null : unsentReplyReview(detail?.reviews || []);
-  // the agent's record, one mount wherever the Agent work step draws it (the wrapped card, the step once that is dismissed)
+  // the agent's record, drawn once, on the Agent work step
   const recordProps = { taskId: selected, pages: isGeneral ? [] : (detail?.artifacts || []).filter((a) => isPublished(a) || a.kind === "shown"),
     draft: (() => { const r = pendingReview || unsentReview || sentReview; return r ? r.FinalText || r.DraftText || "" : ""; })(),
     stamp: `${(detail?.comments || []).length}-${detail?.transcript?.at || ""}-${(detail?.artifacts || []).length}` };
@@ -624,7 +627,8 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
     .find((m) => m.Status !== "context" && m.Direction !== "out");
   // ...and whether there is anybody at the other end of it (taskLifecycle.hasCorrespondent). Every
   // reply door hangs off this, so a task you typed yourself offers no reply to write.
-  const replyMessage = hasCorrespondent(sourceMessage) ? sourceMessage : null;
+  // a BATCH owes nobody one reply: its items are four authors, each answered (or merged, or closed) on its own line (batch.py)
+  const replyMessage = !detail?.batch && hasCorrespondent(sourceMessage) ? sourceMessage : null;
   const workContext = t?.Playbook
     ? `Playbook · ${t.Playbook.title}${t.Playbook.uses?.length ? ` · uses ${t.Playbook.uses.join(", ")}` : ""}`
     : t?.Source === "report" && sourceMessage?.SourceName
@@ -738,7 +742,10 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
   // why nothing is running on the agent step - never started, or what it did before it went (funnel.agent_story)
   const story = storyShown(detail?.agentStory, { alive: term?.alive, liveRun, queued: rowState === "queued",
     closed: ["done", "dropped"].includes(t?.Status) }) ? detail.agentStory : null;
-  const workspaceMode = agentWorkspaceMode({ isGeneral, generalStarted, session: term, wrapping, wrapped });
+  // a record to show: the step draws the story INTO it (its sentence first, its timeline behind the record's More), never beside it
+  const hasRecord = !!(report || detail?.transcript || (isGeneral && generalStarted)
+    || (detail?.artifacts || []).some((a) => (isPublished(a) && !isGeneral) || a.kind === "agent_result"));
+  const workspaceMode = agentWorkspaceMode({ isGeneral, generalStarted, session: term, wrapping });
   const replyState = replyPhase(detail?.reviews || []);
   // ONE question per page. A running session is itself the agent stage, so it is never folded; the
   // hand-picked stage wins over the computed one until you leave the task (start an agent on a task
@@ -755,6 +762,7 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
     proposal: proposals.length > 0, agentSub: term ? subState(term) : null,
     emails: emailsWaiting,
   })));
+  const storyAt = storyPlace(story, { open: stage === "agent" && !sessionView, hasRecord });
   // only a folded heading is a control: exactly one stage is open, so clicking the open one has
   // nothing to do and must not offer a chevron that does nothing.
   const stageProps = (name) => ({ folded: stage !== name, onToggle: stage === name ? null : () => setOpenStage(name) });
@@ -1133,6 +1141,20 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
                     )}
                   </Box>
                 )}
+                {/* ...and a BATCH's items stay in view while its agent works through them: each result lands on its line as the
+                    agent reports it, and the presses on a finished line are usable without leaving the session (batch.py) */}
+                {sessionView && detail?.batch && (
+                  <Box sx={{ ...card, ...step, mb: 0, px: 1.5, py: 1.1, flexShrink: 0 }}>
+                    <Box onClick={() => setItemsOpen((v) => !v)} sx={{ display: "flex", alignItems: "center", gap: 0.85, cursor: "pointer" }}>
+                      <Typography sx={{ ...label }}>The items</Typography>
+                      <Typography noWrap sx={{ color: DIM, fontSize: 11.5, flex: 1, minWidth: 0 }}>{batchProgress(detail.batch)}</Typography>
+                      <ExpandMoreIcon sx={{ fontSize: 18, color: FAINT, transition: "transform .15s", transform: itemsOpen ? "rotate(180deg)" : "none" }} />
+                    </Box>
+                    {itemsOpen && <Box sx={{ maxHeight: 360, overflowY: "auto", minWidth: 0 }}>
+                      <BatchItems taskId={t?.TaskId} items={detail.batch} bare
+                        onChanged={() => { loadDetail(t.TaskId); loadTasks(); onChanged?.(); }} /></Box>}
+                  </Box>
+                )}
                 {!sessionView && (
                   <Box sx={{ ...card, ...step, borderTop: 0, mb: 0, px: 1.5, py: stage === "task" ? 1.5 : 1.1, flexShrink: 0 }}>
                     {/* FOLDED - the same controls the open card has, in the same order, with their
@@ -1231,6 +1253,9 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
                             The WHOLE LINE is the target, not the 16px box: on a manual task ticking these
                             off IS the work (the owner, 2026-09-16), and a box that small did not look
                             like something you were meant to click. */}
+                        {/* a BATCH: its items in ranked order, each with what the agent found and the owner's presses (batch.py) */}
+                        {detail?.batch && <BatchItems taskId={t?.TaskId} items={detail.batch}
+                          onChanged={() => { loadDetail(t.TaskId); loadTasks(); onChanged?.(); }} />}
                         {(detail?.checklist || []).length > 0 && (
                           <Box sx={{ mt: 0.85, maxWidth: 900 }}>
                             {detail.checklist.filter((i) => !i.out).map((i) => (
@@ -1253,7 +1278,8 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
                         )}
                         {/* the rest of what they said, in order - indented so it reads as the same
                             person continuing rather than as separate business */}
-                        {alsoSaid.map((m) => (
+                        {/* ...never on a batch: its other messages are its OTHER ITEMS, not the same person continuing */}
+                        {!detail?.batch && alsoSaid.map((m) => (
                           <Box key={m.MessageId} sx={{ mt: 0.6, pl: 1, borderLeft: `2px solid ${BORDER}`, maxWidth: 900 }}>
                             <Typography variant="caption" sx={{ color: FAINT, fontSize: 10 }}>
                               {m.FromName || m.FromEmail || m.Channel}{m.SentAt ? ` · ${fmtDateTime(m.SentAt)}` : ""}
@@ -1447,8 +1473,10 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
                         </Box>
                       : null} />
                   </Box>
-                  {/* the record below already carries the last message when the step is open */}
-                  {story && <AgentStory story={story} who={agentName(t)} showSaid={stage !== "agent"} />}
+                  {/* folded with no record, the step says its one sentence; open with none, the story is the whole account (storyPlace) */}
+                  {(storyAt === "line" || storyAt === "story") && <AgentStory story={story} who={agentName(t)} compact={storyAt === "line"} />}
+                  {/* ...folded over a record, its sentence and what happened - the draft it wrote opens below it (2026-09-22) */}
+                  {storyAt === "summary" && <AgentRecord {...recordProps} story={story} who={agentName(t)} folded />}
                   {stage === "agent" && <>
                   {term?.alive && !inRow && (
                     // on a phone the two buttons take their own row: sharing one with the heading, they
@@ -1486,11 +1514,12 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
                   {/* WHAT THE AGENT DID AND THOUGHT, one card for every CLI and the general agent (AgentRecord): what happened,
                       its last message (named the reply only when the draft is in it), what it made, and every step behind one button. It was
                       two blocks (a saved answer with no report, or the report) reading two different stores. */}
-                  {!wrapped && !sessionView && (report || detail?.transcript || (isGeneral && generalStarted)
-                    || (detail?.artifacts || []).some((a) => (isPublished(a) && !isGeneral) || a.kind === "agent_result")) && (
-                    <Box sx={{ mt: 1.1, pt: 1.1, borderTop: `1px solid ${BORDER}` }}>
+                  {/* ...and a session that ENDED is this one block too - its state, what happened, More - where a "Session closed"
+                      card under the step told the same run a second time, and the story above it a third (the owner, 2026-10-12) */}
+                  {!sessionView && hasRecord && (
+                    <Box sx={{ mt: 1.1, pt: 1.1, borderTop: `1px solid ${BORDER}`, "&:empty": { display: "none" } }}>
                       {/* a chat shows its pages under the answer that made them; a terminal's are kept here */}
-                      <AgentRecord {...recordProps} />
+                      <AgentRecord {...recordProps} story={storyAt === "record" ? story : null} who={agentName(t)} inChat={workspaceMode === "general"} />
                       {diffRun && <Box sx={{ mt: 0.75 }}><DiffBlock text={diffRun.DiffText} /></Box>}
                     </Box>
                   )}
@@ -1588,35 +1617,6 @@ export default function TaskPage({ taskId: selected, listRow = null, onListChang
                         : "Reading the transcript and writing up what this session did. The task and reply remain separate — this takes a few seconds."}
                     </Typography>
                     <LinearProgress sx={{ mt: 1, borderRadius: 1, height: 3 }} />
-                  </Box>
-                ) : workspaceMode === "wrapped" ? (
-                  <Box sx={{ ...card, bgcolor: "#e3e6e1", border: "1px solid #d2d6cf" }}>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
-                      <DoneAllIcon sx={{ fontSize: 17, color: "#47654a" }} />
-                      <Typography sx={{ color: INK, fontWeight: 600, fontSize: 13.5, flex: 1 }}>
-                        Session closed — here is what it did
-                      </Typography>
-                      <Button size="small" sx={{ fontSize: 11 }} onClick={() => setWrapped(null)}>dismiss</Button>
-                    </Box>
-                    {/* THE SAME RECORD the step shows once the card is gone - what happened, its last message, what it saved - so a
-                        later ending (merged, closed) is a line ADDED to it and never its replacement. It drew the newest CODER REPORT,
-                        and the poll that saw the merge filed a second one whose "last message" was our own sentence: the agent's account
-                        was there, then gone (the owner, 2026-10-12: "it was there and then disappeared?") */}
-                    <AgentRecord {...recordProps} />
-                    <Typography variant="caption" sx={{ color: DIM, display: "block", mt: 1 }}>
-                      The session ended and its write-up was saved. The task stays open until you mark it done;
-                      reply separately if someone is waiting. Start another session and the agent is handed this,
-                      so it carries on instead of starting over.
-                    </Typography>
-                    {/* the card used to name Review without offering a way to get there - but with Close out already open below it, the
-                        button opened what was open and did nothing (the owner, 2026-10-11): offered only when the draft is out of sight */}
-                    {/* ...and only while there IS one: the wrap's answer said "drafting", the merge retired that draft a few seconds
-                        later, and the button opened an empty Close out (2026-10-12) - the review on the task decides, not the reply */}
-                    {pendingReview && stage !== "reply" && (
-                      <Button size="small" variant="contained" disableElevation sx={{ mt: 1 }}
-                        startIcon={<ForwardToInboxIcon sx={{ fontSize: 15 }} />}
-                        onClick={() => setOpenStage("reply")}>Read the draft</Button>
-                    )}
                   </Box>
                 ) : workspaceMode === "live" && peek ? (
                   /* the session, folded to one line while the task behind it is being read */
