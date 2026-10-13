@@ -37,3 +37,12 @@ test("AI defaults navigation links are keyboard-operable buttons", () => {
   assert.ok(aiDefaults.includes('<Typography component="button" type="button" variant="caption" onClick={() => onGo(slot.owner_link)}'));
   assert.ok(aiDefaults.includes('<Typography component="button" type="button" variant="body2" onClick={() => onGo("connectors")}'));
 });
+
+test("LEARNED.md view switch uses accessible buttons", () => {
+  const docs = read("DocsView.jsx");
+
+  assert.ok(docs.includes('component="button"'));
+  assert.ok(docs.includes('type="button"'));
+  assert.ok(docs.includes("aria-pressed={view === k}"));
+  assert.ok(docs.includes("onClick={() => setView(k)}"));
+});
