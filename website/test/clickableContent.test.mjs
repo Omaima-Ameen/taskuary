@@ -37,3 +37,11 @@ test("AI defaults navigation links are keyboard-operable buttons", () => {
   assert.ok(aiDefaults.includes('<Typography component="button" type="button" variant="caption" onClick={() => onGo(slot.owner_link)}'));
   assert.ok(aiDefaults.includes('<Typography component="button" type="button" variant="body2" onClick={() => onGo("connectors")}'));
 });
+
+test("Settings help links are keyboard-operable buttons", () => {
+  const settings = read("SettingsView.jsx");
+
+  assert.ok(settings.includes('component="button"'));
+  assert.ok(settings.includes('type="button"'));
+  assert.ok(settings.includes('onClick={() => setHelp(SECTION_HELP.audit)}'));
+});
